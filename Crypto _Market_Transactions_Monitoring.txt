@@ -1,0 +1,62 @@
+---Crypto Market Transactions Monitoring
+
+WITH TransactionDetails AS (
+    SELECT 
+      sender,
+      dt,
+      amount,
+      LAG(dt) OVER(PARTITION BY sender ORDER BY dt) AS prev_dt, SUM(amount) 
+      OVER(PARTITION BY sender ORDER BY dt ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumulative_amount,
+      ROW_NUMBER() OVER(PARTITION BY SENDER ORDER BY dt) AS row_num
+      FROM transactions
+),
+TransactionSequences AS (
+    SELECT
+     sender,
+     dt,
+     amount,
+     prev_dt,
+     cumulative_amount,
+     row_num,
+     CASE
+     WHEN prev_dt IS NULL
+     OR TIMESTAMPDIFF(MINUTE, prev_dt, dt) > 60 THEN row_num
+     ELSE NULL
+     END AS new_sequence
+     FROM TransactionDetails
+),
+SequencesGrouped AS (
+    SELECT
+    sender,
+    dt,
+    amount,
+    cumulative_amount,
+    SUM(new_sequence) OVER(PARTITION BY sender ORDER BY dt)
+    AS sequence_group
+    FROM TransactionSequences
+),
+SuspiciousSequences AS (
+    SELECT
+    sender,
+    MIN(dt) AS sequence_start,
+    MAX(dt) AS sequence_end,
+    COUNT(*) AS transactions_count,
+    SUM(amount) AS transactions_sum
+    FROM SequencesGrouped
+    GROUP BY
+    sender,
+    sequence_group
+    HAVING
+    SUM(amount) >= 150
+)
+SELECT
+    sender,
+    sequence_start,
+    sequence_end,
+    transactions_count,
+    ROUND(transactions_sum, 6) AS transactions_sum
+    FROM SuspiciousSequences
+    ORDER BY
+     sender ASC,
+     sequence_start ASC,
+     sequence_end ASC;
